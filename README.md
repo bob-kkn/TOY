@@ -52,3 +52,5 @@ CAU159는 도로 면형(Polygon) 데이터를 분석하여 중심선(LineString 
 * **Graph Theory:** NetworkX, Momepy
 * **Config & Validation:** Pydantic (`BaseSettings`)
 * **UI Framework:** PySide6
+## 6. Design Notes
+* [`docs/topology_design_direction_ko.md`](docs/topology_design_direction_ko.md): 밀집 면형 간섭/중복 중앙선/임계값 전략에 대한 설계 제안.

@@ -49,7 +49,7 @@ def build_app(logger: Log) -> BuiltApp:
 
     snapper = CoordinateSnapper(logger)
     planarizer = Planarizer(logger)
-    merger = IntersectionMerger(logger)
+    merger = IntersectionMerger(logger, gis_config)
     fork_cleaner = TerminalForkCleaner(logger)
     spur_cleaner = SpurCleaner(logger)
     smoother = IntersectionSmoother(logger)

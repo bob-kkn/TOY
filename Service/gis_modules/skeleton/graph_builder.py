@@ -144,7 +144,7 @@ class SkeletonGraphBuilder:
                 if l2 is None or l2.is_empty:
                     continue
 
-                key2 = (u2, v2) if u2 <= v2 else (v2, u2)
+                key2 = self._canonical_edge_key(u2, v2)
                 if key2 in moved_edges:
                     continue
 
@@ -177,6 +177,7 @@ class SkeletonGraphBuilder:
                 graph.remove_edge(u2, v2)
                 graph.add_edge(start, end, weight=float(shifted.length), geometry=shifted)
                 moved_edges.add(key2)
+                moved_edges.add(self._canonical_edge_key(start, end))
         return graph
 
     def _reconnect_directional_breaks(self, graph: nx.Graph, policy: SkeletonPolicy, boundary_geom: Any) -> nx.Graph:
@@ -202,9 +203,8 @@ class SkeletonGraphBuilder:
                     continue
                 boundary_hit = geom.intersection(boundary)
                 inside_ratio = float(boundary_hit.length / geom.length) if geom.length > 0 else 0.0
-                if inside_ratio < policy.reconnect_min_inside_ratio:
-                    continue
-                if not geom.within(boundary.buffer(policy.reconnect_boundary_buffer_m)):
+                is_within_buffer = geom.within(boundary.buffer(policy.reconnect_boundary_buffer_m))
+                if inside_ratio < policy.reconnect_min_inside_ratio and not is_within_buffer:
                     continue
                 graph.add_edge(a, b, weight=float(geom.length), geometry=geom)
         return graph
@@ -223,15 +223,15 @@ class SkeletonGraphBuilder:
 
         start = self._round_xy(*coords[0])
         end = self._round_xy(*coords[-1])
-        if start == old_u and end == old_v:
+        direct_cost = self._point_distance(start, old_u) + self._point_distance(end, old_v)
+        reverse_cost = self._point_distance(start, old_v) + self._point_distance(end, old_u)
+
+        if direct_cost <= reverse_cost:
             coords[0] = new_u
             coords[-1] = new_v
-        elif start == old_v and end == old_u:
+        else:
             coords[0] = new_v
             coords[-1] = new_u
-        else:
-            coords[0] = new_u
-            coords[-1] = new_v
 
         return LineString(coords)
 
@@ -301,3 +301,9 @@ class SkeletonGraphBuilder:
 
     def _round_xy(self, x: float, y: float) -> Tuple[float, float]:
         return round(float(x), COORD_PRECISION), round(float(y), COORD_PRECISION)
+
+    def _canonical_edge_key(self, u: Tuple[float, float], v: Tuple[float, float]) -> tuple[Tuple[float, float], Tuple[float, float]]:
+        return (u, v) if u <= v else (v, u)
+
+    def _point_distance(self, a: Tuple[float, float], b: Tuple[float, float]) -> float:
+        return math.hypot(a[0] - b[0], a[1] - b[1])

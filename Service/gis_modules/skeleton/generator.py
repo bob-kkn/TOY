@@ -15,9 +15,6 @@ from shapely.ops import unary_union, voronoi_diagram
 from Common.log import Log
 from .policy import SkeletonPolicy
 
-DENSITY_INTERVAL = 0.5
-
-
 class VoronoiGenerator:
     def __init__(self, logger: Log):
         self._logger = logger
@@ -31,7 +28,6 @@ class VoronoiGenerator:
         used = [False] * len(geoms)
         merged_parts = []
         distance_th = max(0.5, policy.min_lane_width_m * 0.7)
-        shared_ratio_th = 0.08
 
         for i, base in enumerate(geoms):
             if used[i]:
@@ -55,7 +51,7 @@ class VoronoiGenerator:
                     shared_len = float(current_union.boundary.intersection(cand.boundary).length)
                     perim = max(1.0, float(min(current_union.length, cand.length)))
                     shared_ratio = shared_len / perim
-                    if shared_ratio >= shared_ratio_th:
+                    if shared_ratio >= policy.merge_shared_boundary_ratio_th:
                         cluster.append(j)
                         used[j] = True
                         changed = True
@@ -106,7 +102,7 @@ class VoronoiGenerator:
             if poly.is_empty:
                 continue
             try:
-                densified = poly.segmentize(DENSITY_INTERVAL)
+                densified = poly.segmentize(policy.voronoi_density_interval_m)
                 coords = list(densified.exterior.coords)
                 for interior in densified.interiors:
                     coords.extend(list(interior.coords))

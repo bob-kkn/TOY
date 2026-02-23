@@ -9,6 +9,7 @@ import math
 from typing import Any, List, Tuple
 
 import networkx as nx
+from shapely import affinity
 from shapely.geometry import LineString, Point
 from shapely.ops import linemerge
 
@@ -69,10 +70,10 @@ class SkeletonGraphBuilder:
                 break
         return graph
 
-    def separate_parallel_and_reconnect(self, graph: nx.Graph, policy: SkeletonPolicy) -> nx.Graph:
+    def separate_parallel_and_reconnect(self, graph: nx.Graph, policy: SkeletonPolicy, boundary_geom: Any) -> nx.Graph:
         """평행/근접 엣지 분리 후, 방향 기반 끊김 연결을 수행합니다."""
         graph = self._split_parallel_close_edges(graph, policy)
-        graph = self._reconnect_directional_breaks(graph, policy)
+        graph = self._reconnect_directional_breaks(graph, policy, boundary_geom)
         return graph
 
     def smooth_by_direction_field(self, graph: nx.Graph, policy: SkeletonPolicy) -> nx.Graph:
@@ -104,12 +105,18 @@ class SkeletonGraphBuilder:
                 new_positions[node] = self._round_xy(nxp, nyp)
 
             remapped = nx.Graph()
-            for u, v in graph.edges():
+            for u, v, data in graph.edges(data=True):
                 uu = new_positions.get(u, u)
                 vv = new_positions.get(v, v)
                 if uu == vv:
                     continue
-                geom = self._directional_smooth_and_resample(LineString([uu, vv]), policy)
+
+                base_geom = data.get("geometry")
+                if base_geom is None or base_geom.is_empty or len(base_geom.coords) < 2:
+                    continue
+
+                morphed = self._morph_geometry_with_new_endpoints(base_geom, u, v, uu, vv)
+                geom = self._directional_smooth_and_resample(morphed, policy)
                 if geom is None or geom.is_empty:
                     continue
                 remapped.add_edge(uu, vv, weight=float(geom.length), geometry=geom)
@@ -121,35 +128,57 @@ class SkeletonGraphBuilder:
 
     def _split_parallel_close_edges(self, graph: nx.Graph, policy: SkeletonPolicy) -> nx.Graph:
         edges = list(graph.edges(data=True))
+        moved_edges: set[tuple[Tuple[float, float], Tuple[float, float]]] = set()
+
         for i in range(len(edges)):
             u1, v1, d1 = edges[i]
             l1 = d1.get("geometry")
-            if l1 is None:
+            if l1 is None or l1.is_empty:
                 continue
-            mid1 = l1.interpolate(0.5, normalized=True)
             dir1 = self._edge_dir(u1, v1)
+
             for j in range(i + 1, len(edges)):
                 u2, v2, d2 = edges[j]
                 l2 = d2.get("geometry")
-                if l2 is None:
+                if l2 is None or l2.is_empty:
                     continue
-                mid2 = l2.interpolate(0.5, normalized=True)
-                if mid1.distance(mid2) > policy.min_lane_width_m * 0.8:
+
+                key2 = (u2, v2) if u2 <= v2 else (v2, u2)
+                if key2 in moved_edges:
                     continue
+
+                min_dist = l1.distance(l2)
+                if min_dist > policy.min_lane_width_m * policy.parallel_close_distance_ratio:
+                    continue
+
                 dir2 = self._edge_dir(u2, v2)
                 angle = self._angle_between(dir1, dir2)
-                if angle > 12.0:
+                if angle > policy.parallel_max_angle_deg:
                     continue
-                # 살짝 옆으로 밀어 중첩 분리
-                if graph.has_edge(u2, v2):
-                    offset = policy.min_lane_width_m * 0.2
-                    nu = self._round_xy(u2[0] + offset, u2[1] + offset)
-                    nv = self._round_xy(v2[0] + offset, v2[1] + offset)
-                    graph.remove_edge(u2, v2)
-                    graph.add_edge(nu, nv, weight=float(LineString([nu, nv]).length), geometry=LineString([nu, nv]))
+
+                if not graph.has_edge(u2, v2):
+                    continue
+
+                offset_m = policy.min_lane_width_m * policy.parallel_separation_offset_ratio
+                nxv, nyv = self._normal_from_direction(dir2)
+                shifted = affinity.translate(l2, xoff=nxv * offset_m, yoff=nyv * offset_m)
+                if shifted is None or shifted.is_empty:
+                    continue
+                shifted = self._round_line(shifted)
+                if shifted is None or shifted.is_empty or len(shifted.coords) < 2:
+                    continue
+
+                start = self._round_xy(*shifted.coords[0])
+                end = self._round_xy(*shifted.coords[-1])
+                if start == end:
+                    continue
+
+                graph.remove_edge(u2, v2)
+                graph.add_edge(start, end, weight=float(shifted.length), geometry=shifted)
+                moved_edges.add(key2)
         return graph
 
-    def _reconnect_directional_breaks(self, graph: nx.Graph, policy: SkeletonPolicy) -> nx.Graph:
+    def _reconnect_directional_breaks(self, graph: nx.Graph, policy: SkeletonPolicy, boundary_geom: Any) -> nx.Graph:
         endpoints = [n for n, d in graph.degree() if d == 1]
         for i, a in enumerate(endpoints):
             for b in endpoints[i + 1 :]:
@@ -165,8 +194,42 @@ class SkeletonGraphBuilder:
                 if graph.has_edge(a, b):
                     continue
                 geom = LineString([a, b])
+                if geom.length <= 0:
+                    continue
+                boundary_hit = geom.intersection(boundary_geom)
+                inside_ratio = float(boundary_hit.length / geom.length) if geom.length > 0 else 0.0
+                if inside_ratio < policy.reconnect_min_inside_ratio:
+                    continue
+                if not geom.within(boundary_geom.buffer(policy.reconnect_boundary_buffer_m)):
+                    continue
                 graph.add_edge(a, b, weight=float(geom.length), geometry=geom)
         return graph
+
+    def _morph_geometry_with_new_endpoints(
+        self,
+        base: LineString,
+        old_u: Tuple[float, float],
+        old_v: Tuple[float, float],
+        new_u: Tuple[float, float],
+        new_v: Tuple[float, float],
+    ) -> LineString:
+        coords = list(base.coords)
+        if len(coords) < 2:
+            return LineString([new_u, new_v])
+
+        start = self._round_xy(*coords[0])
+        end = self._round_xy(*coords[-1])
+        if start == old_u and end == old_v:
+            coords[0] = new_u
+            coords[-1] = new_v
+        elif start == old_v and end == old_u:
+            coords[0] = new_v
+            coords[-1] = new_u
+        else:
+            coords[0] = new_u
+            coords[-1] = new_v
+
+        return LineString(coords)
 
     def _directional_smooth_and_resample(self, line: LineString, policy: SkeletonPolicy) -> LineString:
         coords = list(line.coords)
@@ -213,6 +276,24 @@ class SkeletonGraphBuilder:
     def _angle_between(self, a: Tuple[float, float], b: Tuple[float, float]) -> float:
         dot = max(-1.0, min(1.0, a[0] * b[0] + a[1] * b[1]))
         return math.degrees(math.acos(abs(dot)))
+
+    def _normal_from_direction(self, direction: Tuple[float, float]) -> Tuple[float, float]:
+        nxv = -direction[1]
+        nyv = direction[0]
+        norm = math.hypot(nxv, nyv)
+        if norm == 0.0:
+            return 0.0, 0.0
+        return nxv / norm, nyv / norm
+
+    def _round_line(self, line: LineString) -> LineString:
+        rounded = [(round(float(x), COORD_PRECISION), round(float(y), COORD_PRECISION)) for x, y in line.coords]
+        dedup = []
+        for pt in rounded:
+            if not dedup or dedup[-1] != pt:
+                dedup.append(pt)
+        if len(dedup) < 2:
+            return line
+        return LineString(dedup)
 
     def _round_xy(self, x: float, y: float) -> Tuple[float, float]:
         return round(float(x), COORD_PRECISION), round(float(y), COORD_PRECISION)

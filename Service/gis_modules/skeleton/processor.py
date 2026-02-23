@@ -27,7 +27,6 @@ class SkeletonProcessor:
         self._config = config
         self._generator = VoronoiGenerator(logger)
         self._builder = SkeletonGraphBuilder(logger)
-        self._pruners = [RatioPruner(logger), BoundaryNearPruner(logger), ComponentPruner(logger), SpurPruner(logger)]
 
     @safe_run
     @log_execution_time
@@ -39,6 +38,13 @@ class SkeletonProcessor:
         widths = self._extract_width_samples(input_gdf)
         policy = SkeletonPolicy.from_width_distribution(widths)
         self._logger.log(f"[Skeleton:Policy] selected={policy.name}, median_width={self._median(widths):.2f}", level="INFO")
+
+        pruners = [
+            RatioPruner(self._logger, policy),
+            BoundaryNearPruner(self._logger, policy),
+            ComponentPruner(self._logger, policy),
+            SpurPruner(self._logger, policy),
+        ]
 
         merged_polygon = self._generator.merge_polygons(input_gdf, policy)
         if merged_polygon is None or merged_polygon.is_empty:
@@ -63,11 +69,11 @@ class SkeletonProcessor:
         graph = self._builder.build_context_aware_graph(raw_lines, stable_polygon)
         self._log_stage_meta("03_graph_build", {"nodes": graph.number_of_nodes(), "edges": graph.number_of_edges()})
 
-        for pruner in self._pruners:
+        for pruner in pruners:
             graph = pruner.execute(graph)
 
         graph = self._builder.merge_degree_2_nodes(graph)
-        graph = self._builder.separate_parallel_and_reconnect(graph, policy)
+        graph = self._builder.separate_parallel_and_reconnect(graph, policy, stable_polygon)
         graph = self._builder.smooth_by_direction_field(graph, policy)
         self._log_stage_meta("04_graph_refine", {"nodes": graph.number_of_nodes(), "edges": graph.number_of_edges()})
 

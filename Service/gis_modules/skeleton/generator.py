@@ -27,7 +27,7 @@ class VoronoiGenerator:
 
         used = [False] * len(geoms)
         merged_parts = []
-        distance_th = max(0.5, policy.min_lane_width_m * 0.7)
+        distance_th = max(policy.merge_distance_min_m, policy.min_lane_width_m * policy.merge_distance_lane_width_ratio)
 
         for i, base in enumerate(geoms):
             if used[i]:
@@ -51,7 +51,7 @@ class VoronoiGenerator:
                     shared_len = float(current_union.boundary.intersection(cand.boundary).length)
                     perim = max(1.0, float(min(current_union.length, cand.length)))
                     shared_ratio = shared_len / perim
-                    if shared_ratio >= policy.merge_shared_boundary_ratio_th:
+                    if shared_ratio >= policy.merge_shared_ratio_th:
                         cluster.append(j)
                         used[j] = True
                         changed = True
@@ -133,7 +133,7 @@ class VoronoiGenerator:
             if axis is None or normal is None:
                 continue
 
-            sampled = self._sample_boundary_points(poly, policy.pair_sample_step_m)
+            sampled = self._sample_boundary_points(poly, policy.pair_sample_step_m, policy)
             if len(sampled) < 4:
                 continue
 
@@ -164,7 +164,7 @@ class VoronoiGenerator:
             for idx, (_, mx, my) in enumerate(mids):
                 if idx > 0:
                     px, py = mids[idx - 1][1], mids[idx - 1][2]
-                    if math.hypot(mx - px, my - py) > policy.pair_axis_bin_m * 3 and len(segment_pts) >= 2:
+                    if math.hypot(mx - px, my - py) > policy.pair_axis_bin_m * policy.pair_segment_break_bin_ratio and len(segment_pts) >= 2:
                         out_lines.append(LineString(segment_pts))
                         segment_pts = []
                 segment_pts.append((mx, my))
@@ -234,11 +234,11 @@ class VoronoiGenerator:
         except Exception:
             return None, None
 
-    def _sample_boundary_points(self, poly: Polygon, step_m: float) -> List[Tuple[float, float]]:
+    def _sample_boundary_points(self, poly: Polygon, step_m: float, policy: SkeletonPolicy) -> List[Tuple[float, float]]:
         length = float(poly.exterior.length)
         if length <= 0:
             return []
-        n = max(8, int(length / max(step_m, 0.5)))
+        n = max(8, int(length / max(step_m, policy.boundary_sample_min_step_m)))
         return [
             (float(poly.exterior.interpolate((i / n) * length).x), float(poly.exterior.interpolate((i / n) * length).y))
             for i in range(n)

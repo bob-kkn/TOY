@@ -119,3 +119,21 @@
 - (d) 실패 유형 기반 QA로 운영
 
 하는 방향이 더 실무적으로 안전하다.
+
+---
+
+## 9) 최근 반영 상태 점검 (요청 5개 항목)
+
+아래 항목은 `skeleton` 모듈 기준으로 확인한 결과이다.
+
+1. **상수/하드코딩 policy 승격**
+   - `SkeletonPolicy`에 밀도 간격, 공유경계 비율, parallel angle/offset, prune ratio limit 등이 정책 필드로 정의되어 있으며, 폭 분포 기반(`urban`/`rural`)으로 계산된다.
+2. **parallel split 로직 교체**
+   - 근접 판정은 선분 간 거리(`line.distance`)와 각도 조건으로 수행하고, 분리는 법선 벡터 기반 `translate` 오프셋으로 처리한다.
+3. **reconnect 폴리곤 내부 제약 추가**
+   - 재연결 후보는 폴리곤 교차 길이 기반 inside-ratio와 경계 buffer 내부 조건을 함께 만족해야만 연결된다.
+4. **direction-field smoothing의 shape 보존 강화**
+   - 새 직선을 만드는 방식이 아니라, 기존 edge geometry의 endpoint만 이동한 뒤 방향장 스무딩/리샘플링을 적용한다.
+5. **pruner 임계값의 urban/rural 정책 연동**
+   - `prune_ratio_limit` 등 pruning 관련 임계값이 `from_width_distribution`에서 정책 프로파일에 따라 달라지도록 구성되어 있다.
+

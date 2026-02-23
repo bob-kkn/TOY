@@ -26,6 +26,7 @@ class SkeletonGraphBuilder:
 
     def build_context_aware_graph(self, lines: List[LineString], boundary_geom: Any) -> nx.Graph:
         graph = nx.Graph()
+        graph.graph["boundary_geom"] = boundary_geom
         boundary_line = boundary_geom.boundary
         for line in lines:
             if line is None or line.is_empty:
@@ -98,8 +99,8 @@ class SkeletonGraphBuilder:
                 an = math.hypot(ax, ay)
                 if an == 0:
                     continue
-                tx = node[0] + (ax / an) * 0.5
-                ty = node[1] + (ay / an) * 0.5
+                tx = node[0] + (ax / an) * policy.graph_smooth_target_shift_m
+                ty = node[1] + (ay / an) * policy.graph_smooth_target_shift_m
                 nxp = (1 - policy.graph_smooth_alpha) * node[0] + policy.graph_smooth_alpha * tx
                 nyp = (1 - policy.graph_smooth_alpha) * node[1] + policy.graph_smooth_alpha * ty
                 new_positions[node] = self._round_xy(nxp, nyp)
@@ -148,18 +149,18 @@ class SkeletonGraphBuilder:
                     continue
 
                 min_dist = l1.distance(l2)
-                if min_dist > policy.min_lane_width_m * policy.parallel_close_distance_ratio:
+                if min_dist > policy.min_lane_width_m * policy.parallel_close_dist_factor:
                     continue
 
                 dir2 = self._edge_dir(u2, v2)
                 angle = self._angle_between(dir1, dir2)
-                if angle > policy.parallel_max_angle_deg:
+                if angle > policy.parallel_angle_deg:
                     continue
 
                 if not graph.has_edge(u2, v2):
                     continue
 
-                offset_m = policy.min_lane_width_m * policy.parallel_separation_offset_ratio
+                offset_m = policy.min_lane_width_m * policy.parallel_offset_factor
                 nxv, nyv = self._normal_from_direction(dir2)
                 shifted = affinity.translate(l2, xoff=nxv * offset_m, yoff=nyv * offset_m)
                 if shifted is None or shifted.is_empty:
@@ -179,6 +180,9 @@ class SkeletonGraphBuilder:
         return graph
 
     def _reconnect_directional_breaks(self, graph: nx.Graph, policy: SkeletonPolicy, boundary_geom: Any) -> nx.Graph:
+        boundary = graph.graph.get("boundary_geom", boundary_geom)
+        if boundary is None or getattr(boundary, "is_empty", False):
+            return graph
         endpoints = [n for n, d in graph.degree() if d == 1]
         for i, a in enumerate(endpoints):
             for b in endpoints[i + 1 :]:
@@ -196,11 +200,11 @@ class SkeletonGraphBuilder:
                 geom = LineString([a, b])
                 if geom.length <= 0:
                     continue
-                boundary_hit = geom.intersection(boundary_geom)
+                boundary_hit = geom.intersection(boundary)
                 inside_ratio = float(boundary_hit.length / geom.length) if geom.length > 0 else 0.0
                 if inside_ratio < policy.reconnect_min_inside_ratio:
                     continue
-                if not geom.within(boundary_geom.buffer(policy.reconnect_boundary_buffer_m)):
+                if not geom.within(boundary.buffer(policy.reconnect_boundary_buffer_m)):
                     continue
                 graph.add_edge(a, b, weight=float(geom.length), geometry=geom)
         return graph
@@ -248,7 +252,7 @@ class SkeletonGraphBuilder:
         smooth_line = LineString(smoothed)
         if smooth_line.length <= 0:
             return smooth_line
-        step = max(0.4, policy.resample_step_m)
+        step = max(policy.resample_min_step_m, policy.resample_step_m)
         n = max(2, int(smooth_line.length / step) + 1)
         pts = [smooth_line.interpolate((i / (n - 1)) * smooth_line.length) for i in range(n)]
         return LineString([(p.x, p.y) for p in pts])

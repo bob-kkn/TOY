@@ -17,6 +17,10 @@ class SkeletonPolicy:
     min_lane_width_m: float
     voronoi_density_interval_m: float
     merge_shared_ratio_th: float
+    selector_inside_sample_step_m: float
+    selector_min_quality_score: float
+    selector_keep_top_ratio: float
+    selector_length_ref_factor: float
     merge_distance_min_m: float
     merge_distance_lane_width_ratio: float
     pair_sample_step_m: float
@@ -80,6 +84,10 @@ class SkeletonPolicy:
             min_lane_width_m=min_lane_width,
             voronoi_density_interval_m=cls._clamp(median_w * 0.08, 0.35, 1.2),
             merge_shared_ratio_th=cls._clamp(0.06 if is_rural else 0.08, 0.04, 0.15),
+            selector_inside_sample_step_m=cls._clamp(median_w * 0.10, 0.4, 2.0),
+            selector_min_quality_score=cls._clamp(0.48 if is_rural else 0.52, 0.2, 0.9),
+            selector_keep_top_ratio=cls._clamp(0.72 if is_rural else 0.65, 0.2, 1.0),
+            selector_length_ref_factor=cls._clamp(1.8 if is_rural else 1.4, 0.5, 3.0),
             merge_distance_min_m=cls._clamp(0.5, 0.1, 2.0),
             merge_distance_lane_width_ratio=cls._clamp(0.7, 0.2, 2.0),
             pair_sample_step_m=pair_step,

@@ -30,9 +30,12 @@ class SkeletonPolicyWiringTests(unittest.TestCase):
         src, _ = self._module("Service/gis_modules/skeleton/generator.py")
         self.assertIn("policy.merge_distance_min_m", src)
         self.assertIn("policy.merge_distance_lane_width_ratio", src)
-        self.assertIn("policy.merge_shared_ratio_th", src)
+        self.assertIn("TopologyClusterer", src)
         self.assertIn("policy.pair_segment_break_bin_ratio", src)
         self.assertIn("policy.boundary_sample_min_step_m", src)
+        self.assertIn("from .topology_cluster import TopologyClusterer", src)
+        self.assertIn("clusterer = TopologyClusterer(geoms, policy, distance_th)", src)
+        self.assertIn("if clusterer.can_attach(cluster, j):", src)
 
     def test_processor_inserts_selector_stage_before_graph_build(self):
         src, _ = self._module("Service/gis_modules/skeleton/processor.py")

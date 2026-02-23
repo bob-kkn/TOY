@@ -14,6 +14,7 @@ from shapely.ops import unary_union, voronoi_diagram
 
 from Common.log import Log
 from .policy import SkeletonPolicy
+from .topology_cluster import TopologyClusterer
 
 class VoronoiGenerator:
     def __init__(self, logger: Log):
@@ -28,8 +29,9 @@ class VoronoiGenerator:
         used = [False] * len(geoms)
         merged_parts = []
         distance_th = max(policy.merge_distance_min_m, policy.min_lane_width_m * policy.merge_distance_lane_width_ratio)
+        clusterer = TopologyClusterer(geoms, policy, distance_th)
 
-        for i, base in enumerate(geoms):
+        for i, _ in enumerate(geoms):
             if used[i]:
                 continue
             cluster = [i]
@@ -37,21 +39,10 @@ class VoronoiGenerator:
             changed = True
             while changed:
                 changed = False
-                current_union = unary_union([geoms[idx] for idx in cluster])
-                for j, cand in enumerate(geoms):
+                for j, _ in enumerate(geoms):
                     if used[j]:
                         continue
-                    dist = current_union.distance(cand)
-                    if dist <= distance_th:
-                        cluster.append(j)
-                        used[j] = True
-                        changed = True
-                        continue
-
-                    shared_len = float(current_union.boundary.intersection(cand.boundary).length)
-                    perim = max(1.0, float(min(current_union.length, cand.length)))
-                    shared_ratio = shared_len / perim
-                    if shared_ratio >= policy.merge_shared_ratio_th:
+                    if clusterer.can_attach(cluster, j):
                         cluster.append(j)
                         used[j] = True
                         changed = True

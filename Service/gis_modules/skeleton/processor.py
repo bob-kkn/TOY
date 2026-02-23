@@ -19,6 +19,7 @@ from .generator import VoronoiGenerator
 from .graph_builder import SkeletonGraphBuilder
 from .policy import SkeletonPolicy
 from .pruners import RatioPruner, BoundaryNearPruner, ComponentPruner, SpurPruner
+from .selector import SkeletonCandidateSelector
 
 
 class SkeletonProcessor:
@@ -27,6 +28,7 @@ class SkeletonProcessor:
         self._config = config
         self._generator = VoronoiGenerator(logger)
         self._builder = SkeletonGraphBuilder(logger)
+        self._selector = SkeletonCandidateSelector(logger)
 
     @safe_run
     @log_execution_time
@@ -57,10 +59,20 @@ class SkeletonProcessor:
 
         raw_voronoi = self._generator.generate_voronoi_skeleton(stable_polygon, policy)
         raw_boundary_pair = self._generator.generate_boundary_pair_centerlines(stable_polygon, policy)
-        raw_lines = [ln for ln in (raw_voronoi + raw_boundary_pair) if ln is not None and not ln.is_empty]
+
+        selected_voronoi = self._selector.select(raw_voronoi, stable_polygon, policy, "voronoi")
+        selected_boundary_pair = self._selector.select(raw_boundary_pair, stable_polygon, policy, "boundary_pair")
+
+        raw_lines = [ln for ln in (selected_voronoi + selected_boundary_pair) if ln is not None and not ln.is_empty]
         self._log_stage_meta(
             "02_candidates",
-            {"voronoi": len(raw_voronoi), "boundary_pair": len(raw_boundary_pair), "total": len(raw_lines)},
+            {
+                "voronoi_raw": len(raw_voronoi),
+                "voronoi_selected": len(selected_voronoi),
+                "boundary_pair_raw": len(raw_boundary_pair),
+                "boundary_pair_selected": len(selected_boundary_pair),
+                "total": len(raw_lines),
+            },
         )
 
         if not raw_lines:

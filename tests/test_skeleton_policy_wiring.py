@@ -13,6 +13,10 @@ class SkeletonPolicyWiringTests(unittest.TestCase):
         required = [
             "voronoi_density_interval_m",
             "merge_shared_ratio_th",
+            "selector_inside_sample_step_m",
+            "selector_min_quality_score",
+            "selector_keep_top_ratio",
+            "selector_length_ref_factor",
             "parallel_close_dist_factor",
             "parallel_angle_deg",
             "parallel_offset_factor",
@@ -29,6 +33,16 @@ class SkeletonPolicyWiringTests(unittest.TestCase):
         self.assertIn("policy.merge_shared_ratio_th", src)
         self.assertIn("policy.pair_segment_break_bin_ratio", src)
         self.assertIn("policy.boundary_sample_min_step_m", src)
+
+    def test_processor_inserts_selector_stage_before_graph_build(self):
+        src, _ = self._module("Service/gis_modules/skeleton/processor.py")
+        self.assertIn("from .selector import SkeletonCandidateSelector", src)
+        self.assertIn("self._selector = SkeletonCandidateSelector(logger)", src)
+        self.assertIn('selected_voronoi = self._selector.select(raw_voronoi, stable_polygon, policy, "voronoi")', src)
+        self.assertIn(
+            'selected_boundary_pair = self._selector.select(raw_boundary_pair, stable_polygon, policy, "boundary_pair")',
+            src,
+        )
 
     def test_graph_builder_uses_policy_for_smoothing_shift_and_resample_floor(self):
         src, _ = self._module("Service/gis_modules/skeleton/graph_builder.py")

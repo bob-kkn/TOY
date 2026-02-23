@@ -6,7 +6,9 @@ Service/gis_modules/skeleton/processor.py
 from __future__ import annotations
 
 import math
-from typing import Dict, List
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 import geopandas as gpd
 from shapely.geometry import LineString, MultiPolygon, Polygon
@@ -29,13 +31,21 @@ class SkeletonProcessor:
         self._generator = VoronoiGenerator(logger)
         self._builder = SkeletonGraphBuilder(logger)
         self._selector = SkeletonCandidateSelector(logger)
+        self._last_stage_meta: List[Dict[str, Any]] = []
 
     @safe_run
     @log_execution_time
-    def execute(self, input_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    def execute(
+        self,
+        input_gdf: gpd.GeoDataFrame,
+        return_stage_meta: bool = False,
+        stage_meta_output_path: Optional[str] = None,
+    ) -> Union[gpd.GeoDataFrame, tuple[gpd.GeoDataFrame, List[Dict[str, Any]]]]:
+        self._last_stage_meta = []
         if input_gdf.empty:
             self._logger.log("입력 데이터가 비어있어 처리를 중단합니다.", level="WARNING")
-            return gpd.GeoDataFrame(columns=["geometry"], crs=input_gdf.crs)
+            empty_gdf = gpd.GeoDataFrame(columns=["geometry"], crs=input_gdf.crs)
+            return self._finalize_result(empty_gdf, return_stage_meta, stage_meta_output_path)
 
         widths = self._extract_width_samples(input_gdf)
         policy = SkeletonPolicy.from_width_distribution(widths)
@@ -51,7 +61,8 @@ class SkeletonProcessor:
         merged_polygon = self._generator.merge_polygons(input_gdf, policy)
         if merged_polygon is None or merged_polygon.is_empty:
             self._logger.log("면형 통합 결과가 비어있습니다.", level="WARNING")
-            return gpd.GeoDataFrame(columns=["geometry"], crs=input_gdf.crs)
+            empty_gdf = gpd.GeoDataFrame(columns=["geometry"], crs=input_gdf.crs)
+            return self._finalize_result(empty_gdf, return_stage_meta, stage_meta_output_path)
         self._log_stage_meta("00_merge", {"parts": len(self._to_polygons(merged_polygon))})
 
         stable_polygon = self._generator.stabilize_geometry(merged_polygon, policy)
@@ -76,7 +87,8 @@ class SkeletonProcessor:
         )
 
         if not raw_lines:
-            return gpd.GeoDataFrame(columns=["geometry"], crs=input_gdf.crs)
+            empty_gdf = gpd.GeoDataFrame(columns=["geometry"], crs=input_gdf.crs)
+            return self._finalize_result(empty_gdf, return_stage_meta, stage_meta_output_path)
 
         graph = self._builder.build_context_aware_graph(raw_lines, stable_polygon)
         self._log_stage_meta("03_graph_build", {"nodes": graph.number_of_nodes(), "edges": graph.number_of_edges()})
@@ -93,7 +105,11 @@ class SkeletonProcessor:
         final_lines = [ln for ln in final_lines if ln is not None and isinstance(ln, LineString) and ln.length >= policy.postprocess_min_len_m]
         self._log_stage_meta("05_finalize", {"line_count": len(final_lines), "min_len": policy.postprocess_min_len_m})
 
-        return gpd.GeoDataFrame(geometry=final_lines, crs=input_gdf.crs)
+        output_gdf = gpd.GeoDataFrame(geometry=final_lines, crs=input_gdf.crs)
+        return self._finalize_result(output_gdf, return_stage_meta, stage_meta_output_path)
+
+    def get_last_stage_meta(self) -> List[Dict[str, Any]]:
+        return [dict(item) for item in self._last_stage_meta]
 
     def _extract_width_samples(self, gdf: gpd.GeoDataFrame) -> List[float]:
         widths: List[float] = []
@@ -131,5 +147,24 @@ class SkeletonProcessor:
         return []
 
     def _log_stage_meta(self, stage: str, meta: Dict[str, object]) -> None:
+        stage_record = {"stage": stage, "meta": dict(meta)}
+        self._last_stage_meta.append(stage_record)
         items = ", ".join([f"{k}={v}" for k, v in meta.items()])
         self._logger.log(f"[Skeleton:Stage:{stage}] {items}", level="INFO")
+
+    def _save_stage_meta(self, output_path: str) -> None:
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self._last_stage_meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _finalize_result(
+        self,
+        gdf: gpd.GeoDataFrame,
+        return_stage_meta: bool,
+        stage_meta_output_path: Optional[str],
+    ) -> Union[gpd.GeoDataFrame, tuple[gpd.GeoDataFrame, List[Dict[str, Any]]]]:
+        if stage_meta_output_path:
+            self._save_stage_meta(stage_meta_output_path)
+        if return_stage_meta:
+            return gdf, self.get_last_stage_meta()
+        return gdf

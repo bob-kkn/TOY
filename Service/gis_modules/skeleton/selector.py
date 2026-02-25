@@ -31,10 +31,12 @@ class SkeletonCandidateSelector:
 
         scored.sort(key=lambda x: x[0], reverse=True)
         quality_filtered = [item for item in scored if item[0] >= policy.selector_min_quality_score]
-        base_pool = quality_filtered if quality_filtered else scored
 
-        keep_count = max(1, int(math.ceil(len(base_pool) * policy.selector_keep_top_ratio)))
-        selected = [line for _, line in base_pool[:keep_count]]
+        if quality_filtered:
+            selected = [line for _, line in quality_filtered]
+        else:
+            keep_count = max(1, int(math.ceil(len(scored) * policy.selector_keep_top_ratio)))
+            selected = [line for _, line in scored[:keep_count]]
 
         self._logger.log(
             (
